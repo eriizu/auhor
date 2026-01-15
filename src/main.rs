@@ -3,7 +3,25 @@ use std::collections::BTreeSet;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use colored::Colorize as _;
+
+type Result<T> = std::result::Result<T, AuthorError>;
+
+#[derive(Debug, thiserror::Error)]
+enum AuthorError {
+    #[error("Not inside a git repository")]
+    NotInRepo,
+    #[error("Unknown command: {0}")]
+    UnknownCommand(String),
+    #[error("add requires at least one login")]
+    MissingLogins,
+    #[error(transparent)]
+    Inquire(#[from] inquire::error::InquireError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+fn main() -> Result<()> {
     let mut args = std::env::args();
     let program = args.next().unwrap_or_else(|| "author".to_string());
     let command = args.next();
@@ -22,14 +40,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(other) => {
-            return Err(format!("Unknown command: {other}").into());
+            return Err(AuthorError::UnknownCommand(other.to_string()));
         }
     }
 
     Ok(())
 }
 
-fn find_repo_root(start: PathBuf) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn find_repo_root(start: PathBuf) -> Result<PathBuf> {
     let mut current = start.as_path();
     loop {
         if current.join(".git").is_dir() {
@@ -37,16 +55,16 @@ fn find_repo_root(start: PathBuf) -> Result<PathBuf, Box<dyn std::error::Error>>
         }
         match current.parent() {
             Some(parent) => current = parent,
-            None => return Err("Not inside a git repository".into()),
+            None => return Err(AuthorError::NotInRepo),
         }
     }
 }
 
-fn list_authors(path: &Path, program: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn list_authors(path: &Path, program: &str) -> Result<()> {
     let authors = read_authors(path)?;
     if authors.is_empty() {
         let prefix = "no authors specified, run ".italic();
-        let command = format!("{program} add login").bold();
+        let command = format!("{program} add login").bold().italic();
         let suffix = " to add them".italic();
         println!("{prefix}{command}{suffix}");
         return Ok(());
@@ -57,9 +75,9 @@ fn list_authors(path: &Path, program: &str) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-fn add_authors(path: &Path, logins: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+fn add_authors(path: &Path, logins: Vec<String>) -> Result<()> {
     if logins.is_empty() {
-        return Err("add requires at least one login".into());
+        return Err(AuthorError::MissingLogins);
     }
     let mut authors = read_authors(path)?;
     for login in logins {
@@ -68,7 +86,7 @@ fn add_authors(path: &Path, logins: Vec<String>) -> Result<(), Box<dyn std::erro
     write_authors(path, &authors)
 }
 
-fn prompt_remove(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn prompt_remove(path: &Path) -> Result<()> {
     let authors = read_authors(path)?;
     if authors.is_empty() {
         return Ok(());
@@ -86,7 +104,7 @@ fn prompt_remove(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     write_authors(path, &remaining)
 }
 
-fn remove_authors(path: &Path, removals: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+fn remove_authors(path: &Path, removals: Vec<String>) -> Result<()> {
     let mut authors = read_authors(path)?;
     for removal in removals {
         authors.remove(&removal);
@@ -94,7 +112,7 @@ fn remove_authors(path: &Path, removals: Vec<String>) -> Result<(), Box<dyn std:
     write_authors(path, &authors)
 }
 
-fn read_authors(path: &Path) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+fn read_authors(path: &Path) -> Result<BTreeSet<String>> {
     if !path.exists() {
         return Ok(BTreeSet::new());
     }
@@ -102,10 +120,7 @@ fn read_authors(path: &Path) -> Result<BTreeSet<String>, Box<dyn std::error::Err
     Ok(contents.split_whitespace().map(str::to_string).collect())
 }
 
-fn write_authors(
-    path: &Path,
-    authors: &BTreeSet<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn write_authors(path: &Path, authors: &BTreeSet<String>) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

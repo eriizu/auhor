@@ -39,7 +39,7 @@
 
 ## Code Style
 ### Imports
-- Do not overuse `use` for deep module paths; prefer local paths when clearer.
+- Prefer qualifying instead of importing with `use` espacially if symbol is not very deep; don't ever import `std::fs` or `std::env`.
 - Import traits with `as _` to avoid name pollution (example: `use std::io::Write as _;`).
 - Keep import blocks minimal and grouped by std/external/local.
 
