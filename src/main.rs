@@ -1,16 +1,13 @@
+use colored::Colorize as _;
 use std::collections::BTreeSet;
-use std::env;
-use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use colored::Colorize as _;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = env::args();
+    let mut args = std::env::args();
     let program = args.next().unwrap_or_else(|| "author".to_string());
     let command = args.next();
-    let repo_root = find_repo_root(env::current_dir()?)?;
+    let repo_root = find_repo_root(std::env::current_dir()?)?;
     let author_path = repo_root.join("author.txt");
 
     match command.as_deref() {
@@ -101,7 +98,7 @@ fn read_authors(path: &Path) -> Result<BTreeSet<String>, Box<dyn std::error::Err
     if !path.exists() {
         return Ok(BTreeSet::new());
     }
-    let contents = fs::read_to_string(path)?;
+    let contents = std::fs::read_to_string(path)?;
     Ok(contents.split_whitespace().map(str::to_string).collect())
 }
 
@@ -110,9 +107,9 @@ fn write_authors(
     authors: &BTreeSet<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent)?;
     }
-    let mut file = fs::File::create(path)?;
+    let mut file = std::fs::File::create(path)?;
     if !authors.is_empty() {
         let content = authors.iter().cloned().collect::<Vec<String>>().join(" ");
         writeln!(file, "{content}")?;
