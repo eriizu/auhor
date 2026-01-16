@@ -32,6 +32,26 @@ enum Directory {
 struct Report {
     removed: Vec<String>,
     added: Vec<String>,
+    not_added: Vec<String>,
+    not_removed: Vec<String>,
+}
+
+impl Report {
+    fn added(&mut self, value: String) {
+        self.added.push(value);
+    }
+
+    fn not_added(&mut self, value: String) {
+        self.not_added.push(value);
+    }
+
+    fn removed(&mut self, value: String) {
+        self.removed.push(value);
+    }
+
+    fn not_removed(&mut self, value: String) {
+        self.not_removed.push(value);
+    }
 }
 
 struct AuthorManager {
@@ -43,10 +63,24 @@ struct AuthorManager {
 impl std::fmt::Display for Report {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if !self.removed.is_empty() {
-            writeln!(f, "removed {} from authors", self.removed.join(", "))?;
+            writeln!(f, "{}", format!("-- {}", self.removed.join(", ")).red())?;
         }
         if !self.added.is_empty() {
-            writeln!(f, "added {} to authors", self.added.join(", "))?;
+            writeln!(f, "{}", format!("++ {}", self.added.join(", ")).green())?;
+        }
+        if !self.not_removed.is_empty() {
+            writeln!(
+                f,
+                "did not remove {} (did not exist)",
+                self.not_removed.join(", ")
+            )?;
+        }
+        if !self.not_added.is_empty() {
+            writeln!(
+                f,
+                "did not add {} (already existed)",
+                self.not_added.join(", ")
+            )?;
         }
         Ok(())
     }
@@ -79,11 +113,11 @@ fn run(author_file_name: &str) -> Result<()> {
         }
         Some(other) => Err(AuthorError::UnknownCommand(other.to_string())),
     };
+    print!("{}", author_manager.report);
     if let Err(AuthorError::NoAuthors) = cmd_res {
         no_authors_message(&program);
         Ok(())
     } else {
-        print!("{}", author_manager.report);
         cmd_res
     }
 }
@@ -144,7 +178,9 @@ impl AuthorManager {
         let mut authors = read_authors(&self.file)?;
         for login in logins {
             if authors.insert(login.clone()) {
-                self.report.added.push(login);
+                self.report.added(login);
+            } else {
+                self.report.not_added(login);
             }
         }
         write_authors(&self.file, &authors)
@@ -154,7 +190,9 @@ impl AuthorManager {
         let mut authors = read_authors(&self.file)?;
         for removal in removals {
             if authors.remove(&removal) {
-                self.report.removed.push(removal);
+                self.report.removed(removal);
+            } else {
+                self.report.not_removed(removal);
             }
         }
         write_authors(&self.file, &authors)
