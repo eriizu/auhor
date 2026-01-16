@@ -19,97 +19,166 @@ enum AuthorError {
     Inquire(#[from] inquire::error::InquireError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("No authors in list")]
+    NoAuthors,
 }
 
-fn main() -> Result<()> {
+enum Directory {
+    GitRepo(PathBuf),
+    Bare,
+}
+
+#[derive(Default)]
+struct Report {
+    removed: Vec<String>,
+    added: Vec<String>,
+}
+
+struct AuthorManager {
+    directory: Directory,
+    file: PathBuf,
+    report: Report,
+}
+
+impl std::fmt::Display for Report {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.removed.is_empty() {
+            writeln!(f, "removed {} from authors", self.removed.join(", "))?;
+        }
+        if !self.added.is_empty() {
+            writeln!(f, "added {} to authors", self.added.join(", "))?;
+        }
+        Ok(())
+    }
+}
+
+fn main() {
+    if let Err(err) = run("author.txt") {
+        eprintln!("{}", format!("{err}").red());
+    }
+}
+
+fn run(author_file_name: &str) -> Result<()> {
     let mut args = std::env::args();
     let program = args.next().unwrap_or_else(|| "author".to_string());
     let command = args.next();
-    let repo_root = find_repo_root(std::env::current_dir()?)?;
-    let author_path = repo_root.join("author.txt");
+    let mut author_manager =
+        AuthorManager::find_author_file(std::env::current_dir()?, author_file_name)?;
+    println!("operating {}", author_manager);
 
-    match command.as_deref() {
-        None => list_authors(&author_path, &program)?,
-        Some("add") => add_authors(&author_path, args.collect())?,
+    let cmd_res = match command.as_deref() {
+        None => author_manager.list_authors(),
+        Some("add") => author_manager.add_authors(args.collect()),
         Some("remove") => {
             let removals: Vec<String> = args.collect();
             if removals.is_empty() {
-                prompt_remove(&author_path)?;
+                author_manager.prompt_remove()
             } else {
-                remove_authors(&author_path, removals)?;
+                author_manager.remove_authors(removals)
             }
         }
-        Some(other) => {
-            return Err(AuthorError::UnknownCommand(other.to_string()));
+        Some(other) => Err(AuthorError::UnknownCommand(other.to_string())),
+    };
+    if let Err(AuthorError::NoAuthors) = cmd_res {
+        no_authors_message(&program);
+        Ok(())
+    } else {
+        print!("{}", author_manager.report);
+        cmd_res
+    }
+}
+
+impl std::fmt::Display for AuthorManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.directory {
+            Directory::GitRepo(path) => write!(f, "in git repo {}", path.display())?,
+            Directory::Bare => write!(f, "not in a repo, on lone {} file", self.file.display())?,
+        };
+        Ok(())
+    }
+}
+
+impl AuthorManager {
+    fn new(directory: Directory, file: PathBuf) -> Self {
+        Self {
+            directory,
+            file,
+            report: Report::default(),
+        }
+    }
+    fn find_author_file(start: PathBuf, author_file_name: &str) -> Result<Self> {
+        let mut current = start.as_path();
+        loop {
+            let directory = if current.join(".git").is_dir() {
+                Some(Directory::GitRepo(current.to_path_buf()))
+            } else if current.join(author_file_name).is_file() {
+                Some(Directory::Bare)
+            } else {
+                None
+            };
+            if let Some(directory) = directory {
+                return Ok(Self::new(directory, current.join(author_file_name)));
+            }
+            match current.parent() {
+                Some(parent) => current = parent,
+                None => return Err(AuthorError::NotInRepo),
+            }
         }
     }
 
-    Ok(())
-}
-
-fn find_repo_root(start: PathBuf) -> Result<PathBuf> {
-    let mut current = start.as_path();
-    loop {
-        if current.join(".git").is_dir() {
-            return Ok(current.to_path_buf());
+    fn list_authors(&self) -> Result<()> {
+        let authors = read_authors(&self.file)?;
+        if authors.is_empty() {
+            return Err(AuthorError::NoAuthors);
         }
-        match current.parent() {
-            Some(parent) => current = parent,
-            None => return Err(AuthorError::NotInRepo),
+        for author in authors {
+            println!("{author}");
         }
+        Ok(())
+    }
+
+    fn add_authors(&mut self, logins: Vec<String>) -> Result<()> {
+        if logins.is_empty() {
+            return Err(AuthorError::MissingLogins);
+        }
+        let mut authors = read_authors(&self.file)?;
+        for login in logins {
+            if authors.insert(login.clone()) {
+                self.report.added.push(login);
+            }
+        }
+        write_authors(&self.file, &authors)
+    }
+
+    fn remove_authors(&mut self, removals: Vec<String>) -> Result<()> {
+        let mut authors = read_authors(&self.file)?;
+        for removal in removals {
+            if authors.remove(&removal) {
+                self.report.removed.push(removal);
+            }
+        }
+        write_authors(&self.file, &authors)
+    }
+
+    fn prompt_remove(&mut self) -> Result<()> {
+        let authors = read_authors(&self.file)?;
+        if authors.is_empty() {
+            return Ok(());
+        }
+        let options: Vec<String> = authors.iter().cloned().collect();
+        let selections = inquire::MultiSelect::new("Select authors to remove", options).prompt()?;
+        if selections.is_empty() {
+            return Ok(());
+        }
+        self.remove_authors(selections)
     }
 }
 
-fn list_authors(path: &Path, program: &str) -> Result<()> {
-    let authors = read_authors(path)?;
-    if authors.is_empty() {
-        let prefix = "no authors specified, run ".italic();
-        let command = format!("{program} add login").bold().italic();
-        let suffix = " to add them".italic();
-        println!("{prefix}{command}{suffix}");
-        return Ok(());
-    }
-    for author in authors {
-        println!("{author}");
-    }
-    Ok(())
-}
-
-fn add_authors(path: &Path, logins: Vec<String>) -> Result<()> {
-    if logins.is_empty() {
-        return Err(AuthorError::MissingLogins);
-    }
-    let mut authors = read_authors(path)?;
-    for login in logins {
-        authors.insert(login);
-    }
-    write_authors(path, &authors)
-}
-
-fn prompt_remove(path: &Path) -> Result<()> {
-    let authors = read_authors(path)?;
-    if authors.is_empty() {
-        return Ok(());
-    }
-    let options: Vec<String> = authors.iter().cloned().collect();
-    let selections = inquire::MultiSelect::new("Select authors to remove", options).prompt()?;
-    if selections.is_empty() {
-        return Ok(());
-    }
-    let selection_set: BTreeSet<String> = selections.into_iter().collect();
-    let remaining: BTreeSet<String> = authors
-        .into_iter()
-        .filter(|author| !selection_set.contains(author))
-        .collect();
-    write_authors(path, &remaining)
-}
-
-fn remove_authors(path: &Path, removals: Vec<String>) -> Result<()> {
-    let mut authors = read_authors(path)?;
-    for removal in removals {
-        authors.remove(&removal);
-    }
-    write_authors(path, &authors)
+fn no_authors_message(program_name: &str) {
+    let prefix = "no authors specified, run ".italic();
+    let command = format!("{program_name} add login").bold().italic();
+    let suffix = " to add them".italic();
+    println!("{prefix}{command}{suffix}");
 }
 
 fn read_authors(path: &Path) -> Result<BTreeSet<String>> {
