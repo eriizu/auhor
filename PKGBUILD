@@ -1,5 +1,5 @@
 pkgname=author
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="add, remove, list project's author.txt"
 arch=("x86_64")

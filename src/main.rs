@@ -9,8 +9,8 @@ type Result<T> = std::result::Result<T, AuthorError>;
 
 #[derive(Debug, thiserror::Error)]
 enum AuthorError {
-    #[error("Not inside a git repository")]
-    NotInRepo,
+    #[error("Author file not found or not inside a git repository")]
+    AuthorNotFoundOrNotInRepo,
     #[error("Unknown command: {0}")]
     UnknownCommand(String),
     #[error("add requires at least one login")]
@@ -155,7 +155,7 @@ impl AuthorManager {
             }
             match current.parent() {
                 Some(parent) => current = parent,
-                None => return Err(AuthorError::NotInRepo),
+                None => return Err(AuthorError::AuthorNotFoundOrNotInRepo),
             }
         }
     }
